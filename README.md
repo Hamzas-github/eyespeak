@@ -6,7 +6,8 @@ Built as a portfolio prototype to explore hands-free AAC (augmentative and alter
 
 ## What it does
 
-- **Gaze cursor** snaps to whichever of the nine cards you look at, so jitter from the webcam tracker doesn't matter much.
+- **Four big targets at a time.** The board is grouped into Yes, No, Food, and Pain. Food and Pain open a small sub-menu (water, hunger, drink / pain, toilet, medication) with a Back card. Bigger cards mean rough gaze still lands on the right one.
+- **Gaze cursor** snaps to whichever card you look at, so jitter from the webcam tracker doesn't matter much.
 - **Blink to select.** A deliberate, both-eyes-closed blink past your calibrated threshold picks the highlighted card. A ring fills while your eyes are shut so you can see it registering.
 - **Ignores the wrong things.** Quick natural blinks, one eye, long closures (resting), and blinks while your gaze is between cards all do nothing.
 - **Speaks and logs** every selection for a caregiver sitting in the same room. Nothing is sent anywhere.
@@ -36,7 +37,7 @@ Click **Start camera**, allow the camera prompt, run through calibration, and yo
 
 ## Limitations
 
-WebGazer is a webcam eye-tracker, not infrared hardware. Even after calibration it's accurate to roughly a card-sized region and drifts when you move your head or the lighting changes. That's why the board is nine big targets and why selection only needs your gaze settled over a card, not pixel-perfect aim.
+WebGazer is a webcam eye-tracker, not infrared hardware. Even after calibration it's accurate to roughly a card-sized region and drifts when you move your head or the lighting changes. That's why the board shows only four big targets at a time and why selection only needs your gaze settled over a card, not pixel-perfect aim.
 
 ## Not a medical device
 

@@ -24,7 +24,12 @@
   @media (max-width:880px){ main{grid-template-columns:1fr} }
 
   /* Board */
-  .board{display:grid; grid-template-columns:repeat(3,1fr); grid-auto-rows:1fr; gap:14px; min-height:60vh}
+  .boardcol{display:flex; flex-direction:column; gap:12px; min-height:0}
+  #crumb{font-size:15px; font-weight:600; color:var(--muted); letter-spacing:.02em}
+  .board{flex:1; display:grid; grid-template-columns:repeat(2,1fr); grid-auto-rows:1fr; gap:16px; min-height:60vh}
+  .card.category{background:linear-gradient(180deg,#2a2f5a,#20254e); box-shadow:0 6px 18px rgba(0,0,0,.4)}
+  .card.category::after{content:'▸ more'; position:absolute; bottom:10px; right:14px; font-size:12px; font-weight:600; color:var(--accent); opacity:.85}
+  .card.back{background:linear-gradient(180deg,#23314a,#1b2740)}
   .card{
     position:relative; border:0; border-radius:18px; cursor:pointer; color:var(--text);
     background:linear-gradient(180deg,var(--card),#1d2542); box-shadow:0 6px 18px rgba(0,0,0,.35);
@@ -106,7 +111,10 @@
 </header>
 
 <main>
-  <section class="board" id="board" aria-label="Communication board"></section>
+  <div class="boardcol">
+    <div id="crumb" aria-live="polite">Main board</div>
+    <section class="board" id="board" aria-label="Communication board"></section>
+  </div>
 
   <aside>
     <div class="panel">
@@ -176,10 +184,23 @@ const CFG = {
   faceLostMs: 700,         // grace before we declare tracking lost
   ease: 0.18,              // cursor glide damping toward the snapped card centre (lower = smoother/slower)
 };
-const PHRASES = [
-  {e:'✅', t:'Yes'},          {e:'❌', t:'No'},            {e:'🩹', t:"I'm in pain"},
-  {e:'💧', t:'Water, please'},{e:'🍽️', t:"I'm hungry"},   {e:'🙏', t:'Thank you'},
-  {e:'🚽', t:'I need the bathroom'},{e:'🥶', t:"I'm uncomfortable"},{e:'🗣️', t:'I want to talk'},
+// Two-level menu: fewer, bigger targets so low gaze accuracy still works.
+// A node is a leaf (has `say`), a category (has `children`), or Back (has `back`).
+const TREE = [
+  {e:'✅', t:'Yes',  say:'Yes'},
+  {e:'❌', t:'No',   say:'No'},
+  {e:'🍽️', t:'Food & Drink', children:[
+    {e:'💧', t:'Water, please',      say:'Water, please'},
+    {e:'🍔', t:"I'm hungry",         say:"I'm hungry"},
+    {e:'☕', t:'Something to drink',  say:'I would like something to drink'},
+    {e:'⬅️', t:'Back', back:true},
+  ]},
+  {e:'🩹', t:'Pain & Care', children:[
+    {e:'😣', t:"I'm in pain",        say:"I'm in pain"},
+    {e:'🚽', t:'I need the toilet',  say:'I need the toilet'},
+    {e:'💊', t:'I need medication',  say:'I need my medication'},
+    {e:'⬅️', t:'Back', back:true},
+  ]},
 ];
 
 const S = {
@@ -197,14 +218,22 @@ const S = {
 
 /* ---------- DOM ---------- */
 const board=document.getElementById('board');
-const cards=PHRASES.map((p,i)=>{
-  const b=document.createElement('button');
-  b.className='card'; b.dataset.idx=i; b.type='button';
-  b.innerHTML=`<span class="emoji">${p.e}</span><span>${p.t}</span>`;
-  b.setAttribute('aria-label',p.t);
-  b.addEventListener('click',()=>select(b,'touch/click'));
-  board.appendChild(b); return b;
-});
+let cards=[];                 // buttons currently on screen
+function renderView(nodes, title){
+  board.replaceChildren();
+  cards=nodes.map(node=>{
+    const b=document.createElement('button');
+    b.className='card'+(node.children?' category':'')+(node.back?' back':'');
+    b.type='button'; b.setAttribute('aria-label',node.t);
+    b.innerHTML=`<span class="emoji">${node.e}</span><span>${node.t}</span>`;
+    b._node=node;
+    b.addEventListener('click',()=>activate(b,'touch/click'));
+    board.appendChild(b); return b;
+  });
+  document.getElementById('crumb').textContent = title || 'Main board';
+  // fresh view: drop any in-progress gaze/blink so nothing fires on the way in
+  S.gazeCard=S.candCard=S.blinkGazeCard=null; S.closedSince=null; S.armed=false; resetRing();
+}
 const cursor=document.getElementById('cursor');
 const ring=document.getElementById('ring');
 const ringProg=ring.querySelector('.prog');
@@ -219,15 +248,18 @@ let toastT;
 function toast(msg){ toastEl.textContent=msg; toastEl.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>toastEl.classList.remove('show'),2200); }
 function speak(text){ if(!('speechSynthesis'in window))return; speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(text)); }
 
-function select(card, via){
+function activate(card, via){
   const now=performance.now();
   if(now-S.lastSelect < CFG.cooldownMs && via!=='touch/click') return;  // cooldown (manual click always allowed)
   S.lastSelect=now; S.armed=false; resetRing();
-  const phrase=PHRASES[+card.dataset.idx].t;
-  speak(phrase); toast('Spoke: “'+phrase+'”');
+  const node=card._node;
+  if(node.children){ renderView(node.children, node.t); return; }   // drill into a category
+  if(node.back){ renderView(TREE, null); return; }                  // back to the main board
+  // leaf: speak + log
+  speak(node.say); toast('Spoke: “'+node.say+'”');
   const li=document.createElement('li');
   const ts=new Date().toLocaleTimeString();
-  li.innerHTML=`<span>${phrase}</span><time>${ts} · ${via}</time>`;
+  li.innerHTML=`<span>${node.say}</span><time>${ts} · ${via}</time>`;
   logEl.prepend(li);
   card.classList.add('fired'); setTimeout(()=>card.classList.remove('fired'),350);
 }
@@ -293,7 +325,7 @@ function handleBlink(bothClosed, bothOpen, now){
   } else if(S.closedSince!=null){                          // reopen edge -> decide
     const dur=now-S.closedSince;
     if(isDeliberateBlink(dur,S.blinkMinMs,CFG.maxBlinkMs) && S.blinkGazeCard && now-S.lastSelect>=CFG.cooldownMs){
-      select(S.blinkGazeCard,'blink');
+      activate(S.blinkGazeCard,'blink');
     }
     S.closedSince=null; S.blinkGazeCard=null; resetRing();
   } else { resetRing(); }
@@ -473,13 +505,15 @@ blinkDur.addEventListener('input',()=>{ S.blinkMinMs=+blinkDur.value; document.g
 document.addEventListener('keydown',e=>{
   if(e.key===' '){
     const target=settledCard() || S.gazeCard || (document.activeElement.classList?.contains('card')?document.activeElement:null);
-    if(target){ e.preventDefault(); select(target,'keyboard'); }
+    if(target){ e.preventDefault(); activate(target,'keyboard'); }
   } else if(e.key==='Enter'){
     const f=document.activeElement;
-    if(f && f.classList && f.classList.contains('card')){ e.preventDefault(); select(f,'keyboard'); }
+    if(f && f.classList && f.classList.contains('card')){ e.preventDefault(); activate(f,'keyboard'); }
   }
 });
 window.addEventListener('resize',()=>{ S.gx=Math.min(S.gx,innerWidth); S.gy=Math.min(S.gy,innerHeight); });
+
+renderView(TREE, null);   // draw the main board
 
 /* ---------- self-test (?selftest) ---------- */
 if(location.search.includes('selftest')){
