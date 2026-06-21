@@ -366,7 +366,7 @@ async function startCamera(){
   document.getElementById('camMount').replaceChildren(pv);
 
   try{
-    ({ FaceLandmarker, FilesetResolver }=await import('./vendor/tasks-vision.mjs'));
+    ({ FaceLandmarker, FilesetResolver }=await import('./vendor/tasks-vision.js'));
     const fs=await FilesetResolver.forVisionTasks('./vendor/mediapipe-wasm');
     S.landmarker=await FaceLandmarker.createFromOptions(fs,{
       baseOptions:{ modelAssetPath:'./vendor/face_landmarker.task', delegate:'GPU' },
