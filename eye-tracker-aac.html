@@ -183,6 +183,7 @@ const CFG = {
   maxBlinkMs: 3000,        // longer closure = resting/sleeping, ignored
   faceLostMs: 700,         // grace before we declare tracking lost
   ease: 0.18,              // cursor glide damping toward the snapped card centre (lower = smoother/slower)
+  medianN: 7,              // gaze samples in the median filter (higher = steadier but laggier)
 };
 // Two-level menu: fewer, bigger targets so low gaze accuracy still works.
 // A node is a leaf (has `say`), a category (has `children`), or Back (has `back`).
@@ -250,12 +251,15 @@ function speak(text){ if(!('speechSynthesis'in window))return; speechSynthesis.c
 
 function activate(card, via){
   const now=performance.now();
-  if(now-S.lastSelect < CFG.cooldownMs && via!=='touch/click') return;  // cooldown (manual click always allowed)
-  S.lastSelect=now; S.armed=false; resetRing();
-  const node=card._node;
+  const node=card._node, isNav=!!(node.children||node.back);
+  // cooldown gates spoken selections only; navigating menus stays snappy (manual click always allowed)
+  if(!isNav && now-S.lastSelect < CFG.cooldownMs && via!=='touch/click') return;
+  S.armed=false; resetRing();
+  if(via==='blink') trainOnSelection(card);   // self-improve the gaze model on real use
   if(node.children){ renderView(node.children, node.t); return; }   // drill into a category
   if(node.back){ renderView(TREE, null); return; }                  // back to the main board
   // leaf: speak + log
+  S.lastSelect=now;                            // start the cooldown only on a spoken selection
   speak(node.say); toast('Spoke: “'+node.say+'”');
   const li=document.createElement('li');
   const ts=new Date().toLocaleTimeString();
@@ -265,8 +269,14 @@ function activate(card, via){
 }
 
 /* ---------- gaze plumbing (shared by webgazer & mouse fallback) ---------- */
+// Median-filter the raw gaze: WebGazer spits out occasional wild outliers, and a
+// median over the last few samples drops them where a moving average would smear them in.
+const gazeBuf=[];
 function onGaze(x,y){
-  S.gx=x; S.gy=y;
+  gazeBuf.push([x,y]); if(gazeBuf.length>CFG.medianN) gazeBuf.shift();
+  const xs=gazeBuf.map(p=>p[0]).sort((a,b)=>a-b), ys=gazeBuf.map(p=>p[1]).sort((a,b)=>a-b);
+  const m=xs.length>>1;
+  S.gx=xs[m]; S.gy=ys[m];
 }
 function cardUnder(x,y){
   const el=document.elementFromPoint(x,y);
@@ -456,15 +466,25 @@ function waitFor(get, ready, timeoutMs){
 const calDot=document.getElementById('calDot');
 async function runGazeCalibration(){
   if(S.fallback || typeof window.webgazer.recordScreenPosition!=='function') return;
-  const pts=[[.1,.12],[.5,.12],[.9,.12],[.1,.5],[.5,.5],[.9,.5],[.1,.88],[.5,.88],[.9,.88]];
+  // 13-point grid (3x3 plus inner diagonals) — denser coverage = a better regression fit.
+  const pts=[[.1,.12],[.5,.12],[.9,.12],[.3,.32],[.7,.32],[.1,.5],[.5,.5],[.9,.5],
+             [.3,.68],[.7,.68],[.1,.88],[.5,.88],[.9,.88]];
   calMsg.textContent='Gaze setup — look straight at each dot until it moves.'; calCount.textContent='';
   for(const [fx,fy] of pts){
     const x=Math.round(fx*innerWidth), y=Math.round(fy*innerHeight);
     calDot.style.left=x+'px'; calDot.style.top=y+'px'; calDot.style.display='block';
-    await sleep(700);                                   // let the eyes land on the dot
-    for(let i=0;i<25;i++){ try{ window.webgazer.recordScreenPosition(x,y,'click'); }catch(e){} await sleep(40); }
+    await sleep(650);                                   // let the eyes land on the dot
+    for(let i=0;i<32;i++){ try{ window.webgazer.recordScreenPosition(x,y,'click'); }catch(e){} await sleep(35); }
   }
   calDot.style.display='none';
+}
+
+// Online learning: every gaze/blink selection is a fresh "I was looking here" sample.
+// Feeding the chosen card's centre back into WebGazer lets accuracy improve as it's used.
+function trainOnSelection(card){
+  if(S.fallback || typeof window.webgazer.recordScreenPosition!=='function') return;
+  const r=card.getBoundingClientRect(), x=Math.round(r.left+r.width/2), y=Math.round(r.top+r.height/2);
+  for(let i=0;i<6;i++){ try{ window.webgazer.recordScreenPosition(x,y,'click'); }catch(e){} }
 }
 
 /* ---------- calibration ---------- */
@@ -521,6 +541,9 @@ if(location.search.includes('selftest')){
   a(computeThreshold(0.05,0.7)>0.05 && computeThreshold(0.05,0.7)<0.7,'threshold between open/closed');
   a(computeThreshold(0.4,0.45)===null,'rejects low separation');
   a(isDeliberateBlink(500,500,3000) && !isDeliberateBlink(150,500,3000) && !isDeliberateBlink(4000,500,3000),'blink duration window');
+  // median filter must reject an outlier spike, not average it in
+  gazeBuf.length=0; [[100,100],[102,98],[900,99],[101,101],[99,100]].forEach(p=>onGaze(p[0],p[1]));
+  a(Math.abs(S.gx-100)<5 && Math.abs(S.gy-100)<5,'median filter drops gaze outliers');
   console.log('selftest passed');
 }
 </script>
