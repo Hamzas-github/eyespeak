@@ -64,7 +64,8 @@
   /* Gaze cursor */
   #cursor{position:fixed; width:26px; height:26px; margin:-13px 0 0 -13px; border-radius:50%;
     border:2px solid var(--accent); background:rgba(99,102,241,.22); pointer-events:none; z-index:50; display:none;
-    box-shadow:0 0 14px rgba(99,102,241,.55), inset 0 0 8px rgba(255,255,255,.6)}
+    box-shadow:0 0 14px rgba(99,102,241,.55), inset 0 0 8px rgba(255,255,255,.6);
+    opacity:0; transition:opacity .12s ease}
 
   /* Side panel */
   aside{display:flex; flex-direction:column; gap:14px; min-height:0; overflow-y:auto}
@@ -190,6 +191,9 @@ function computeThreshold(open, closed){
 function isDeliberateBlink(durMs, minMs, maxMs){
   return durMs >= minMs && durMs <= maxMs;
 }
+function pointInRect(x,y,r){
+  return x>=r.left && x<=r.right && y>=r.top && y<=r.bottom;
+}
 
 /* ---------- config / state ---------- */
 const CFG = {
@@ -224,7 +228,8 @@ const S = {
   tracking:false, fallback:false,
   cal:{open:0, closed:0, threshold:null, calibrating:false, samples:[]},
   blinkMinMs:500,
-  gx:innerWidth/2, gy:innerHeight/2, cx:innerWidth/2, cy:innerHeight/2,  // raw gaze + eased cursor
+  rawX:innerWidth/2, rawY:innerHeight/2,
+  gx:innerWidth/2, gy:innerHeight/2, cx:innerWidth/2, cy:innerHeight/2,  // filtered gaze + eased cursor
   gazeCard:null, gazeCardSince:0, candCard:null, candSince:0,
   // blink machine
   armed:true, closedSince:null, blinkGazeCard:null,
@@ -288,7 +293,9 @@ function activate(card, via){
 // Median-filter the raw gaze: WebGazer spits out occasional wild outliers, and a
 // median over the last few samples drops them where a moving average would smear them in.
 const gazeBuf=[];
+const mouseGazeHandler=e=>onGaze(e.clientX,e.clientY);
 function onGaze(x,y){
+  S.rawX=x; S.rawY=y;
   gazeBuf.push([x,y]); if(gazeBuf.length>CFG.medianN) gazeBuf.shift();
   const xs=gazeBuf.map(p=>p[0]).sort((a,b)=>a-b), ys=gazeBuf.map(p=>p[1]).sort((a,b)=>a-b);
   const m=xs.length>>1;
@@ -316,13 +323,19 @@ function uiLoop(){
   // smooth cursor toward raw gaze
   // Magnetic snap: pick the card nearest the raw gaze point, debounce the switch so jitter
   // can't flip it, then glide the cursor to that card's centre and rest there.
-  const raw=nearestCard(S.gx,S.gy);
+  // Never magnetically snap from controls, the caregiver log, or elsewhere outside
+  // the communication board. A blink away from the board must not select anything.
+  const raw=pointInRect(S.rawX,S.rawY,board.getBoundingClientRect()) ? nearestCard(S.gx,S.gy) : null;
   if(raw!==S.candCard){ S.candCard=raw; S.candSince=now; }
+  if(!S.candCard){
+    S.gazeCard=null; S.gazeCardSince=0;
+  }
   if(S.candCard && (S.gazeCard===null || (S.candCard!==S.gazeCard && now-S.candSince>=CFG.switchMs))){
     S.gazeCard=S.candCard; S.gazeCardSince=now;
   }
   const card=S.gazeCard;
   cards.forEach(c=>c.classList.toggle('gazed', c===card));
+  cursor.style.opacity=card?'1':'0';
   if(card){
     const r=card.getBoundingClientRect();
     const tx=r.left+r.width/2, ty=r.top+r.height/2;
@@ -426,13 +439,20 @@ async function startCamera(){
   try{
     ({ FaceLandmarker, FilesetResolver }=await import('./vendor/tasks-vision.js'));
     const fs=await FilesetResolver.forVisionTasks('./vendor/mediapipe-wasm');
-    S.landmarker=await FaceLandmarker.createFromOptions(fs,{
-      baseOptions:{ modelAssetPath:'./vendor/face_landmarker.task', delegate:'GPU' },
+    const options=delegate=>({
+      baseOptions:{ modelAssetPath:'./vendor/face_landmarker.task', delegate },
       outputFaceBlendshapes:true, runningMode:'VIDEO', numFaces:1,
     });
+    try{
+      S.landmarker=await FaceLandmarker.createFromOptions(fs,options('GPU'));
+    }catch(gpuError){
+      console.warn('MediaPipe GPU delegate unavailable; retrying with CPU/WASM.',gpuError);
+      S.landmarker=await FaceLandmarker.createFromOptions(fs,options('CPU'));
+    }
   }catch(e){ console.error('FaceLandmarker failed',e); try{window.webgazer.end();}catch(_){} return startFallback('MediaPipe blink model: '+(e&&e.message||e)); }
 
   S.tracking=true; S.fallback=false;
+  window.removeEventListener('mousemove',mouseGazeHandler);
   cursor.style.display='block';
   document.getElementById('btnTrack').textContent='Stop camera';
   document.getElementById('btnTrack').disabled=false;
@@ -443,17 +463,28 @@ async function startCamera(){
 }
 
 function startFallback(reason){
+  // A failure can happen after WebGazer has already opened the webcam. Release
+  // every partially-created camera resource before switching to mouse-only mode.
+  try{ if(window.webgazer) window.webgazer.end(); }catch(e){}
+  document.querySelectorAll('video').forEach(v=>{ if(v.srcObject) v.srcObject.getTracks().forEach(t=>t.stop()); });
+  if(S.landmarker){ try{S.landmarker.close();}catch(e){} S.landmarker=null; }
+  document.getElementById('camMount').replaceChildren();
   S.fallback=true; S.tracking=false; S.video=null;
   cursor.style.display='block';   // mouse drives the magnetic cursor; blink unavailable without a camera
   setStatus('Camera unavailable — using mouse position as gaze. Blink selection is off; look at a card and press Space, or click.'+(reason?' ['+reason+']':''),'warn');
   document.getElementById('btnTrack').textContent='Stop';
   document.getElementById('btnTrack').disabled=false;
-  window.addEventListener('mousemove',e=>onGaze(e.clientX,e.clientY));
+  document.getElementById('btnRecal').disabled=true;
+  window.removeEventListener('mousemove',mouseGazeHandler);
+  window.addEventListener('mousemove',mouseGazeHandler);
   if(!S.rafUi) uiLoop();
 }
 
 function stopCamera(){
   S.tracking=false; S.fallback=false;
+  if(S.rafUi){ cancelAnimationFrame(S.rafUi); S.rafUi=null; }
+  if(S.rafCam){ cancelAnimationFrame(S.rafCam); S.rafCam=null; }
+  window.removeEventListener('mousemove',mouseGazeHandler);
   try{ window.webgazer.end(); }catch(e){}
   // belt-and-braces: stop every track on every video element we might have touched
   document.querySelectorAll('video').forEach(v=>{ if(v.srcObject) v.srcObject.getTracks().forEach(t=>t.stop()); });
@@ -548,7 +579,10 @@ document.addEventListener('keydown',e=>{
     if(f && f.classList && f.classList.contains('card')){ e.preventDefault(); activate(f,'keyboard'); }
   }
 });
-window.addEventListener('resize',()=>{ S.gx=Math.min(S.gx,innerWidth); S.gy=Math.min(S.gy,innerHeight); });
+window.addEventListener('resize',()=>{
+  S.rawX=Math.min(S.rawX,innerWidth); S.rawY=Math.min(S.rawY,innerHeight);
+  S.gx=Math.min(S.gx,innerWidth); S.gy=Math.min(S.gy,innerHeight);
+});
 
 renderView(TREE, null);   // draw the main board
 
@@ -558,6 +592,7 @@ if(location.search.includes('selftest')){
   a(computeThreshold(0.05,0.7)>0.05 && computeThreshold(0.05,0.7)<0.7,'threshold between open/closed');
   a(computeThreshold(0.4,0.45)===null,'rejects low separation');
   a(isDeliberateBlink(500,500,3000) && !isDeliberateBlink(150,500,3000) && !isDeliberateBlink(4000,500,3000),'blink duration window');
+  a(pointInRect(50,50,{left:0,top:0,right:100,bottom:100}) && !pointInRect(101,50,{left:0,top:0,right:100,bottom:100}),'gaze target is limited to board bounds');
   // median filter must reject an outlier spike, not average it in
   gazeBuf.length=0; [[100,100],[102,98],[900,99],[101,101],[99,100]].forEach(p=>onGaze(p[0],p[1]));
   a(Math.abs(S.gx-100)<5 && Math.abs(S.gy-100)<5,'median filter drops gaze outliers');

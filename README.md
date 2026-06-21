@@ -35,6 +35,18 @@ python -m http.server 8123
 
 Click **Start camera**, allow the camera prompt, run through calibration, and you're going. Hit **Recalibrate** any time it drifts.
 
+## Tests
+
+The automated browser suite covers board rendering, menu navigation, speech/log output, keyboard control, camera-failure fallback, gaze boundary safety, restart behavior, responsive layout, built-in logic checks, and local model/runtime availability.
+
+```bash
+npm install
+npx playwright install chromium
+npm test
+```
+
+To run against an existing Chrome or Edge installation instead of Playwright's bundled Chromium, set `PLAYWRIGHT_EXECUTABLE_PATH` to the browser executable before running `npm test`.
+
 ## Limitations
 
 WebGazer is a webcam eye-tracker, not infrared hardware. Even after calibration it's accurate to roughly a card-sized region and drifts when you move your head or the lighting changes. That's why the board shows only four big targets at a time and why selection only needs your gaze settled over a card, not pixel-perfect aim.

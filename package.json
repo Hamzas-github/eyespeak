@@ -1,0 +1,12 @@
+{
+  "name": "eyespeak",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Browser tests for the EyeSpeak gaze and blink communication board",
+  "scripts": {
+    "test": "node tests/browser.test.cjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.60.0"
+  }
+}
