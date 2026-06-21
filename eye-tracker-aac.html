@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>EyeSpeak — Experimental Gaze & Blink Communication Board</title>
+<style>
+  :root{
+    --bg:#0f1424; --panel:#1a2138; --card:#232c4a; --card-hover:#2d3a63;
+    --accent:#5b8cff; --accent-2:#8a6dff; --ok:#34d399; --warn:#fbbf24; --bad:#f87171;
+    --text:#eef2ff; --muted:#9aa6c8; --ring:#5b8cff;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:radial-gradient(1200px 800px at 70% -10%, #1b2b52, transparent), var(--bg);
+    color:var(--text); font:16px/1.45 system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+    display:flex; flex-direction:column; min-height:100%;
+  }
+  header{padding:14px 20px; border-bottom:1px solid #2a3354; display:flex; flex-wrap:wrap; gap:8px 18px; align-items:baseline}
+  header h1{font-size:20px; margin:0}
+  .disclaimer{font-size:12.5px; color:var(--warn); flex:1 1 320px}
+  main{flex:1; display:grid; grid-template-columns:1fr 320px; gap:18px; padding:18px; min-height:0}
+  @media (max-width:880px){ main{grid-template-columns:1fr} }
+
+  /* Board */
+  .board{display:grid; grid-template-columns:repeat(3,1fr); grid-auto-rows:1fr; gap:14px; min-height:60vh}
+  .card{
+    position:relative; border:0; border-radius:18px; cursor:pointer; color:var(--text);
+    background:linear-gradient(180deg,var(--card),#1d2542); box-shadow:0 6px 18px rgba(0,0,0,.35);
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px;
+    font-size:clamp(15px,2.2vw,22px); font-weight:600; padding:14px; transition:transform .12s, background .12s, outline-color .12s;
+    outline:3px solid transparent;
+  }
+  .card .emoji{font-size:clamp(28px,5vw,46px); line-height:1}
+  .card:hover{background:linear-gradient(180deg,var(--card-hover),#222a4d); transform:translateY(-2px)}
+  .card:focus-visible{outline-color:#fff}
+  .card.gazed{outline-color:var(--accent)}
+  .card.fired{animation:pop .35s ease}
+  @keyframes pop{0%{transform:scale(1)}40%{transform:scale(1.06)}100%{transform:scale(1)}}
+
+  /* Dwell ring overlay */
+  #ring{position:fixed; pointer-events:none; z-index:40; display:none}
+  #ring circle{fill:none; stroke-width:8; transform:rotate(-90deg); transform-origin:center}
+  #ring .track{stroke:rgba(255,255,255,.15)}
+  #ring .prog{stroke:var(--accent); stroke-linecap:round; transition:stroke-dashoffset .05s linear}
+
+  /* Gaze cursor */
+  #cursor{position:fixed; width:26px; height:26px; margin:-13px 0 0 -13px; border-radius:50%;
+    border:2px solid var(--accent); background:rgba(91,140,255,.25); pointer-events:none; z-index:50; display:none;
+    box-shadow:0 0 12px rgba(91,140,255,.6)}
+
+  /* Side panel */
+  aside{display:flex; flex-direction:column; gap:14px; min-height:0}
+  .panel{background:var(--panel); border:1px solid #2a3354; border-radius:14px; padding:14px}
+  .panel h2{font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:0 0 10px}
+  .row{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+  button.ctrl{background:#2a3354; color:var(--text); border:1px solid #3a467a; border-radius:10px; padding:9px 12px; font-size:14px; cursor:pointer}
+  button.ctrl:disabled{opacity:.45; cursor:not-allowed}
+  button.ctrl:hover{background:#34406f}
+  button.ctrl.primary{background:var(--accent); border-color:var(--accent); color:#08122e; font-weight:700}
+  button.ctrl[aria-pressed="true"]{background:var(--accent-2); border-color:var(--accent-2); color:#0b0a24; font-weight:700}
+  label.field{display:flex; flex-direction:column; gap:4px; font-size:13px; color:var(--muted); margin-top:8px}
+  input[type=range]{width:100%}
+  #status{font-size:14px; padding:10px 12px; border-radius:10px; background:#101831; border:1px solid #2a3354}
+  #status.ok{color:var(--ok)} #status.warn{color:var(--warn)} #status.bad{color:var(--bad)}
+  #log{list-style:none; margin:0; padding:0; overflow:auto; max-height:240px; font-size:14px}
+  #log li{padding:6px 8px; border-bottom:1px solid #232c4a; display:flex; justify-content:space-between; gap:10px}
+  #log time{color:var(--muted); font-variant-numeric:tabular-nums; font-size:12px}
+  .muted{color:var(--muted); font-size:12.5px}
+
+  /* Toast */
+  #toast{position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:#0c1430; border:1px solid var(--accent);
+    color:var(--text); padding:12px 18px; border-radius:12px; box-shadow:0 8px 30px rgba(0,0,0,.5); z-index:60;
+    opacity:0; transition:opacity .2s; pointer-events:none; max-width:90vw}
+  #toast.show{opacity:1}
+
+  /* Calibration modal */
+  #cal{position:fixed; inset:0; background:rgba(6,9,20,.9); z-index:70; display:none; align-items:center; justify-content:center; padding:20px}
+  #cal .box{background:var(--panel); border:1px solid #2a3354; border-radius:16px; padding:26px; max-width:480px; text-align:center}
+  #cal h3{margin:0 0 8px} #cal p{color:var(--muted)}
+  #cal .big{font-size:46px; margin:10px 0}
+
+  @media (prefers-reduced-motion: reduce){
+    *{transition:none!important; animation:none!important}
+    #ring .prog{transition:none}
+  }
+  /* WebGazer appends these straight to <body>; keep them as an off-screen data source only */
+  #webgazerVideoFeed,#webgazerVideoCanvas,#webgazerFaceOverlay,#webgazerFaceFeedbackBox,#webgazerGazeDot{
+    position:fixed!important; left:-10000px!important; top:0!important; opacity:0!important; pointer-events:none!important}
+  /* our own mirror of the camera stream, shown in the Status panel */
+  #camMount{margin:0 0 10px; border-radius:10px; overflow:hidden; background:#000}
+  #camMount:empty{display:none}
+  #camMount video{width:100%; height:auto; display:block; transform:scaleX(-1)}  /* mirror like a selfie */
+  /* gaze calibration target */
+  #calDot{position:fixed; width:26px; height:26px; margin:-13px 0 0 -13px; border-radius:50%;
+    background:radial-gradient(circle at 50% 50%, #fff 0 30%, var(--accent) 45% 100%);
+    box-shadow:0 0 18px var(--accent); z-index:80; display:none; animation:pulse 1s infinite}
+  @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.35)}}
+</style>
+</head>
+<body>
+<header>
+  <h1>👁️‍🗨️ EyeSpeak</h1>
+  <div class="disclaimer">Experimental communication aid — <strong>not</strong> an emergency alert system or medical device. Selections are spoken aloud and logged locally for a caregiver in the same room; nothing is sent anywhere.</div>
+</header>
+
+<main>
+  <section class="board" id="board" aria-label="Communication board"></section>
+
+  <aside>
+    <div class="panel">
+      <h2>Camera</h2>
+      <div class="row">
+        <button class="ctrl primary" id="btnTrack">Start camera</button>
+        <button class="ctrl" id="btnRecal" disabled>Recalibrate</button>
+      </div>
+      <label class="field" id="blinkField">Intentional blink length: <span id="blinkVal">500</span> ms
+        <input type="range" id="blinkDur" min="300" max="1200" step="50" value="500" />
+      </label>
+    </div>
+
+    <div class="panel">
+      <h2>Status</h2>
+      <div id="camMount" aria-label="Camera preview"></div>
+      <div id="status" class="muted">Camera off. Start the camera to use gaze and blink selection.</div>
+      <p class="muted" id="modeHint" style="margin:10px 0 0">Look at a card until it highlights, then deliberately close both eyes to select it.</p>
+    </div>
+
+    <div class="panel" style="flex:1; min-height:0; display:flex; flex-direction:column">
+      <h2>Caregiver log <span class="muted">(this session only)</span></h2>
+      <ul id="log" aria-live="polite"></ul>
+    </div>
+  </aside>
+</main>
+
+<div id="cursor"></div>
+<svg id="ring" width="120" height="120" viewBox="0 0 120 120" aria-hidden="true">
+  <circle class="track" cx="60" cy="60" r="52"></circle>
+  <circle class="prog"  cx="60" cy="60" r="52"></circle>
+</svg>
+<div id="toast" role="status" aria-live="assertive"></div>
+
+<div id="cal" role="dialog" aria-modal="true" aria-labelledby="calTitle">
+  <div class="box">
+    <h3 id="calTitle">Quick calibration</h3>
+    <p id="calMsg">Getting ready…</p>
+    <div class="big" id="calCount"></div>
+    <button class="ctrl" id="calSkip" style="margin-top:8px">Skip calibration</button>
+  </div>
+</div>
+<div id="calDot" aria-hidden="true"></div>
+
+<script type="module">
+// MediaPipe is imported lazily inside startCamera() so the board still renders
+// even if the vendor assets are missing or the import fails.
+let FaceLandmarker, FilesetResolver;
+
+/* ---------- pure helpers (also exercised by ?selftest) ---------- */
+// Threshold sits partway between calibrated open and closed eyelid scores.
+function computeThreshold(open, closed){
+  if (closed - open < 0.15) return null;           // not enough separation -> caller warns
+  return open + 0.45 * (closed - open);
+}
+// A closed interval counts as a deliberate blink, not a flutter or a rest/sleep.
+function isDeliberateBlink(durMs, minMs, maxMs){
+  return durMs >= minMs && durMs <= maxMs;
+}
+
+/* ---------- config / state ---------- */
+const CFG = {
+  cooldownMs: 2500,        // shared between modes
+  settleMs: 120,           // extra hold after a card highlights before it can be selected
+  switchMs: 220,           // gaze must rest on a new card this long before the highlight moves (debounce)
+  maxBlinkMs: 3000,        // longer closure = resting/sleeping, ignored
+  faceLostMs: 700,         // grace before we declare tracking lost
+  ease: 0.18,              // cursor glide damping toward the snapped card centre (lower = smoother/slower)
+};
+const PHRASES = [
+  {e:'✅', t:'Yes'},          {e:'❌', t:'No'},            {e:'🩹', t:"I'm in pain"},
+  {e:'💧', t:'Water, please'},{e:'🍽️', t:"I'm hungry"},   {e:'🙏', t:'Thank you'},
+  {e:'🚽', t:'I need the bathroom'},{e:'🥶', t:"I'm uncomfortable"},{e:'🗣️', t:'I want to talk'},
+];
+
+const S = {
+  tracking:false, fallback:false,
+  cal:{open:0, closed:0, threshold:null, calibrating:false, samples:[]},
+  blinkMinMs:500,
+  gx:innerWidth/2, gy:innerHeight/2, cx:innerWidth/2, cy:innerHeight/2,  // raw gaze + eased cursor
+  gazeCard:null, gazeCardSince:0, candCard:null, candSince:0,
+  // blink machine
+  armed:true, closedSince:null, blinkGazeCard:null,
+  lastSelect:-1e9,
+  faceLostSince:null,
+  rafUi:null, rafCam:null, video:null, landmarker:null,
+};
+
+/* ---------- DOM ---------- */
+const board=document.getElementById('board');
+const cards=PHRASES.map((p,i)=>{
+  const b=document.createElement('button');
+  b.className='card'; b.dataset.idx=i; b.type='button';
+  b.innerHTML=`<span class="emoji">${p.e}</span><span>${p.t}</span>`;
+  b.setAttribute('aria-label',p.t);
+  b.addEventListener('click',()=>select(b,'touch/click'));
+  board.appendChild(b); return b;
+});
+const cursor=document.getElementById('cursor');
+const ring=document.getElementById('ring');
+const ringProg=ring.querySelector('.prog');
+const RING_C=2*Math.PI*52; ringProg.style.strokeDasharray=RING_C;
+const statusEl=document.getElementById('status');
+const toastEl=document.getElementById('toast');
+const logEl=document.getElementById('log');
+const calEl=document.getElementById('cal'), calMsg=document.getElementById('calMsg'), calCount=document.getElementById('calCount');
+
+function setStatus(msg, kind='muted'){ statusEl.textContent=msg; statusEl.className=kind; }
+let toastT;
+function toast(msg){ toastEl.textContent=msg; toastEl.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>toastEl.classList.remove('show'),2200); }
+function speak(text){ if(!('speechSynthesis'in window))return; speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(text)); }
+
+function select(card, via){
+  const now=performance.now();
+  if(now-S.lastSelect < CFG.cooldownMs && via!=='touch/click') return;  // cooldown (manual click always allowed)
+  S.lastSelect=now; S.armed=false; resetRing();
+  const phrase=PHRASES[+card.dataset.idx].t;
+  speak(phrase); toast('Spoke: “'+phrase+'”');
+  const li=document.createElement('li');
+  const ts=new Date().toLocaleTimeString();
+  li.innerHTML=`<span>${phrase}</span><time>${ts} · ${via}</time>`;
+  logEl.prepend(li);
+  card.classList.add('fired'); setTimeout(()=>card.classList.remove('fired'),350);
+}
+
+/* ---------- gaze plumbing (shared by webgazer & mouse fallback) ---------- */
+function onGaze(x,y){
+  S.gx=x; S.gy=y;
+}
+function cardUnder(x,y){
+  const el=document.elementFromPoint(x,y);
+  return el && el.closest && el.closest('.card');
+}
+// card whose centre is nearest the point — lets the cursor snap even when gaze lands in a gap
+function nearestCard(x,y){
+  let best=null, bd=Infinity;
+  for(const c of cards){ const r=c.getBoundingClientRect();
+    const dx=x-(r.left+r.width/2), dy=y-(r.top+r.height/2), d=dx*dx+dy*dy;
+    if(d<bd){ bd=d; best=c; } }
+  return best;
+}
+function settledCard(){
+  return (S.gazeCard && performance.now()-S.gazeCardSince>=CFG.settleMs) ? S.gazeCard : null;
+}
+
+function uiLoop(){
+  if(!S.tracking && !S.fallback){ S.rafUi=null; return; }
+  const now=performance.now();
+  // smooth cursor toward raw gaze
+  // Magnetic snap: pick the card nearest the raw gaze point, debounce the switch so jitter
+  // can't flip it, then glide the cursor to that card's centre and rest there.
+  const raw=nearestCard(S.gx,S.gy);
+  if(raw!==S.candCard){ S.candCard=raw; S.candSince=now; }
+  if(S.candCard && (S.gazeCard===null || (S.candCard!==S.gazeCard && now-S.candSince>=CFG.switchMs))){
+    S.gazeCard=S.candCard; S.gazeCardSince=now;
+  }
+  const card=S.gazeCard;
+  cards.forEach(c=>c.classList.toggle('gazed', c===card));
+  if(card){
+    const r=card.getBoundingClientRect();
+    const tx=r.left+r.width/2, ty=r.top+r.height/2;
+    S.cx+=(tx-S.cx)*CFG.ease; S.cy+=(ty-S.cy)*CFG.ease;   // dampened glide
+    cursor.style.left=S.cx+'px'; cursor.style.top=S.cy+'px';
+  }
+  S.rafUi=requestAnimationFrame(uiLoop);
+}
+
+/* ---------- ring: fills while eyes are held closed, as blink-hold feedback ---------- */
+function resetRing(){ ring.style.display='none'; ringProg.style.strokeDashoffset=RING_C; }
+function showRing(card,p){
+  const r=card.getBoundingClientRect();
+  ring.style.display='block';
+  ring.style.left=(r.left+r.width/2-60)+'px';
+  ring.style.top=(r.top+r.height/2-60)+'px';
+  ringProg.style.strokeDashoffset=RING_C*(1-Math.min(1,p));
+}
+
+/* ---------- blink selection (driven by camera loop) ---------- */
+function handleBlink(bothClosed, bothOpen, now){
+  if(!S.armed){ if(bothOpen) S.armed=true; resetRing(); return; }   // must fully reopen before re-arming
+  if(bothClosed){
+    if(S.closedSince==null){ S.closedSince=now; S.blinkGazeCard=settledCard(); }
+    if(S.blinkGazeCard) showRing(S.blinkGazeCard,(now-S.closedSince)/S.blinkMinMs);
+  } else if(S.closedSince!=null){                          // reopen edge -> decide
+    const dur=now-S.closedSince;
+    if(isDeliberateBlink(dur,S.blinkMinMs,CFG.maxBlinkMs) && S.blinkGazeCard && now-S.lastSelect>=CFG.cooldownMs){
+      select(S.blinkGazeCard,'blink');
+    }
+    S.closedSince=null; S.blinkGazeCard=null; resetRing();
+  } else { resetRing(); }
+}
+
+/* ---------- camera detection loop (MediaPipe over WebGazer's video) ---------- */
+const scoreOf=(cats,name)=>{ const c=cats.find(c=>c.categoryName===name); return c?c.score:0; };
+function camLoop(){
+  if(!S.tracking){ S.rafCam=null; return; }
+  const v=S.video, now=performance.now();
+  if(v && v.readyState>=2 && v.videoWidth>0){
+    let res; try{ res=S.landmarker.detectForVideo(v,now); }catch(e){ res=null; }
+    processFrame(res,now);
+  }
+  S.rafCam=requestAnimationFrame(camLoop);
+}
+function processFrame(res,now){
+  const ok = res && res.faceLandmarks && res.faceLandmarks.length>0 && res.faceBlendshapes && res.faceBlendshapes.length>0;
+  if(!ok){
+    if(S.faceLostSince==null) S.faceLostSince=now;
+    else if(now-S.faceLostSince>CFG.faceLostMs){
+      setStatus('Face not detected — selection paused. Check lighting and face the camera.','warn');
+      S.closedSince=null; S.armed=false; resetRing();
+    }
+    return;
+  }
+  S.faceLostSince=null;
+  const cats=res.faceBlendshapes[0].categories;
+  const L=scoreOf(cats,'eyeBlinkLeft'), R=scoreOf(cats,'eyeBlinkRight');
+
+  if(S.cal.calibrating){ S.cal.samples.push((L+R)/2); return; }
+  if(S.cal.threshold==null){ setStatus('Blink not calibrated — please recalibrate.','warn'); return; }
+
+  const th=S.cal.threshold, open=th*0.6;       // hysteresis band
+  const bothClosed = L>=th && R>=th;
+  const bothOpen   = L<open && R<open;
+  handleBlink(bothClosed,bothOpen,now);
+  if(statusEl.className==='warn'||statusEl.className==='muted') setStatus('Tracking OK.','ok');
+}
+
+/* ---------- camera lifecycle ---------- */
+async function startCamera(){
+  setStatus('Starting camera…');
+  document.getElementById('btnTrack').disabled=true;
+  if(typeof window.webgazer==='undefined') return startFallback('WebGazer script did not load (check vendor/webgazer.min.js).');
+  let webgazerOk=false;
+  try{
+    // WebGazer only attaches the camera stream to #webgazerVideoFeed when showVideoPreview is on
+    // (it defaults to false). We need that element populated to share the stream with MediaPipe
+    // and to show the preview; it gets relocated into the Status panel once it's ready.
+    window.webgazer.params.showVideoPreview=true;
+    await window.webgazer.setRegression('ridge').setGazeListener(d=>{ if(d) onGaze(d.x,d.y); }).begin();
+    // turn off the analytic overlays; keep the raw video
+    ['showPredictionPoints','showFaceOverlay','showFaceFeedbackBox']
+      .forEach(m=>{ try{ if(typeof window.webgazer[m]==='function') window.webgazer[m](false); }catch(e){} });
+    webgazerOk=true;
+  }catch(e){ console.error('WebGazer.begin failed',e); return startFallback('WebGazer: '+(e&&e.name||'')+' '+(e&&e.message||e)); }
+
+  // reuse WebGazer's own stream/video for MediaPipe. Element id varies across builds,
+  // so fall back to any <video> that has a live stream.
+  S.video=await waitFor(
+    ()=>document.getElementById('webgazerVideoFeed') || [...document.querySelectorAll('video')].find(v=>v.srcObject),
+    v=>v&&v.readyState>=2&&v.videoWidth>0, 10000);
+  if(!S.video){ try{window.webgazer.end();}catch(e){} return startFallback('camera video never started (permission denied, no webcam, or device in use?).'); }
+
+  // show our own mirror of the stream in the Status panel; WebGazer's own video stays hidden as a data source
+  const pv=document.createElement('video');
+  pv.autoplay=true; pv.muted=true; pv.playsInline=true; pv.srcObject=S.video.srcObject;
+  pv.play().catch(()=>{});
+  document.getElementById('camMount').replaceChildren(pv);
+
+  try{
+    ({ FaceLandmarker, FilesetResolver }=await import('./vendor/tasks-vision.mjs'));
+    const fs=await FilesetResolver.forVisionTasks('./vendor/mediapipe-wasm');
+    S.landmarker=await FaceLandmarker.createFromOptions(fs,{
+      baseOptions:{ modelAssetPath:'./vendor/face_landmarker.task', delegate:'GPU' },
+      outputFaceBlendshapes:true, runningMode:'VIDEO', numFaces:1,
+    });
+  }catch(e){ console.error('FaceLandmarker failed',e); try{window.webgazer.end();}catch(_){} return startFallback('MediaPipe blink model: '+(e&&e.message||e)); }
+
+  S.tracking=true; S.fallback=false;
+  cursor.style.display='block';
+  document.getElementById('btnTrack').textContent='Stop camera';
+  document.getElementById('btnTrack').disabled=false;
+  document.getElementById('btnRecal').disabled=false;
+  if(!S.rafCam) camLoop();
+  if(!S.rafUi) uiLoop();
+  await runCalibration();
+}
+
+function startFallback(reason){
+  S.fallback=true; S.tracking=false; S.video=null;
+  cursor.style.display='block';   // mouse drives the magnetic cursor; blink unavailable without a camera
+  setStatus('Camera unavailable — using mouse position as gaze. Blink selection is off; look at a card and press Space, or click.'+(reason?' ['+reason+']':''),'warn');
+  document.getElementById('btnTrack').textContent='Stop';
+  document.getElementById('btnTrack').disabled=false;
+  window.addEventListener('mousemove',e=>onGaze(e.clientX,e.clientY));
+  if(!S.rafUi) uiLoop();
+}
+
+function stopCamera(){
+  S.tracking=false; S.fallback=false;
+  try{ window.webgazer.end(); }catch(e){}
+  // belt-and-braces: stop every track on every video element we might have touched
+  document.querySelectorAll('video').forEach(v=>{ if(v.srcObject) v.srcObject.getTracks().forEach(t=>t.stop()); });
+  if(S.landmarker){ try{S.landmarker.close();}catch(e){} S.landmarker=null; }
+  S.video=null; cursor.style.display='none'; resetRing();
+  document.getElementById('camMount').replaceChildren();   // remove the relocated preview
+  cards.forEach(c=>c.classList.remove('gazed'));
+  document.getElementById('btnTrack').textContent='Start camera';
+  document.getElementById('btnRecal').disabled=true;
+  setStatus('Camera off. Start the camera to use gaze and blink selection.');
+}
+
+function waitFor(get, ready, timeoutMs){
+  return new Promise(resolve=>{
+    const t0=performance.now();
+    (function poll(){
+      const v=get();
+      if(v&&ready(v)) return resolve(v);
+      if(performance.now()-t0>timeoutMs) return resolve(null);
+      requestAnimationFrame(poll);
+    })();
+  });
+}
+
+/* ---------- gaze calibration: train WebGazer's regression on known points ---------- */
+const calDot=document.getElementById('calDot');
+async function runGazeCalibration(){
+  if(S.fallback || typeof window.webgazer.recordScreenPosition!=='function') return;
+  const pts=[[.1,.12],[.5,.12],[.9,.12],[.1,.5],[.5,.5],[.9,.5],[.1,.88],[.5,.88],[.9,.88]];
+  calMsg.textContent='Gaze setup — look straight at each dot until it moves.'; calCount.textContent='';
+  for(const [fx,fy] of pts){
+    const x=Math.round(fx*innerWidth), y=Math.round(fy*innerHeight);
+    calDot.style.left=x+'px'; calDot.style.top=y+'px'; calDot.style.display='block';
+    await sleep(700);                                   // let the eyes land on the dot
+    for(let i=0;i<25;i++){ try{ window.webgazer.recordScreenPosition(x,y,'click'); }catch(e){} await sleep(40); }
+  }
+  calDot.style.display='none';
+}
+
+/* ---------- calibration ---------- */
+async function runCalibration(){
+  if(S.fallback) return;
+  calEl.style.display='flex';
+  await runGazeCalibration();
+  const collect=async(label,ms)=>{
+    S.cal.samples=[]; S.cal.calibrating=true;
+    for(let s=Math.ceil(ms/1000); s>0; s--){ calMsg.textContent=label; calCount.textContent=s; await sleep(1000); }
+    S.cal.calibrating=false;
+    return S.cal.samples.length? S.cal.samples.reduce((a,b)=>a+b,0)/S.cal.samples.length : 0;
+  };
+  calMsg.textContent='Look at the screen with your eyes open and relaxed.'; calCount.textContent='3'; await sleep(900);
+  const open=await collect('Keep your eyes open…',2000);
+  const closed=await collect('Now gently close both eyes…',2000);
+  const th=computeThreshold(open,closed);
+  S.cal.open=open; S.cal.closed=closed; S.cal.threshold=th;
+  calEl.style.display='none';
+  if(th==null){ setStatus('Calibration unclear (low eye-closure separation). Try better lighting and recalibrate.','warn'); }
+  else { setStatus('Calibrated. Tracking OK.','ok'); toast('Blink calibrated'); }
+}
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+/* ---------- controls ---------- */
+document.getElementById('btnTrack').addEventListener('click',()=>{
+  (S.tracking||S.fallback)?stopCamera():startCamera();
+});
+document.getElementById('btnRecal').addEventListener('click',()=>{ if(S.tracking) runCalibration(); });
+document.getElementById('calSkip').addEventListener('click',()=>{
+  S.cal.calibrating=false; S.cal.threshold=computeThreshold(0.05,0.6); calEl.style.display='none';
+  setStatus('Using default blink calibration. Recalibrate for best results.','warn');
+});
+const blinkDur=document.getElementById('blinkDur');
+blinkDur.addEventListener('input',()=>{ S.blinkMinMs=+blinkDur.value; document.getElementById('blinkVal').textContent=blinkDur.value; });
+
+/* ---------- keyboard: Space selects gazed/focused, Enter selects focused ---------- */
+document.addEventListener('keydown',e=>{
+  if(e.key===' '){
+    const target=settledCard() || S.gazeCard || (document.activeElement.classList?.contains('card')?document.activeElement:null);
+    if(target){ e.preventDefault(); select(target,'keyboard'); }
+  } else if(e.key==='Enter'){
+    const f=document.activeElement;
+    if(f && f.classList && f.classList.contains('card')){ e.preventDefault(); select(f,'keyboard'); }
+  }
+});
+window.addEventListener('resize',()=>{ S.gx=Math.min(S.gx,innerWidth); S.gy=Math.min(S.gy,innerHeight); });
+
+/* ---------- self-test (?selftest) ---------- */
+if(location.search.includes('selftest')){
+  const a=(c,m)=>{ if(!c) throw new Error('FAIL: '+m); console.log('ok:',m); };
+  a(computeThreshold(0.05,0.7)>0.05 && computeThreshold(0.05,0.7)<0.7,'threshold between open/closed');
+  a(computeThreshold(0.4,0.45)===null,'rejects low separation');
+  a(isDeliberateBlink(500,500,3000) && !isDeliberateBlink(150,500,3000) && !isDeliberateBlink(4000,500,3000),'blink duration window');
+  console.log('selftest passed');
+}
+</script>
+<script src="./vendor/webgazer.min.js"></script>
+</body>
+</html>
