@@ -281,7 +281,7 @@ function activate(card, via){
   if(node.back){ renderView(TREE, null); return; }                  // back to the main board
   // leaf: speak + log
   S.lastSelect=now;                            // start the cooldown only on a spoken selection
-  speak(node.say); toast('Spoke: “'+node.say+'”');
+  speak(node.say); toast('Spoke: "'+node.say+'"');
   const li=document.createElement('li');
   const ts=new Date().toLocaleTimeString();
   li.innerHTML=`<span>${node.say}</span><time>${ts} · ${via}</time>`;
