@@ -466,9 +466,10 @@ function waitFor(get, ready, timeoutMs){
 const calDot=document.getElementById('calDot');
 async function runGazeCalibration(){
   if(S.fallback || typeof window.webgazer.recordScreenPosition!=='function') return;
-  // 13-point grid (3x3 plus inner diagonals) — denser coverage = a better regression fit.
-  const pts=[[.1,.12],[.5,.12],[.9,.12],[.3,.32],[.7,.32],[.1,.5],[.5,.5],[.9,.5],
-             [.3,.68],[.7,.68],[.1,.88],[.5,.88],[.9,.88]];
+  // 4x3 grid walked in a snake order, so the dot always moves to an adjacent spot
+  // (easy to follow) instead of jumping around the screen.
+  const cols=[.1,.37,.63,.9], rows=[.14,.5,.86], pts=[];
+  rows.forEach((fy,ri)=>{ (ri%2 ? [...cols].reverse() : cols).forEach(fx=>pts.push([fx,fy])); });
   calMsg.textContent='Gaze setup — look straight at each dot until it moves.'; calCount.textContent='';
   for(const [fx,fy] of pts){
     const x=Math.round(fx*innerWidth), y=Math.round(fy*innerHeight);
